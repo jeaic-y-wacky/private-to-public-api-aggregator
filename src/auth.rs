@@ -1,8 +1,9 @@
 use std::sync::LazyLock;
 use tide::Request;
+use crate::config::CONFIG;
 
 pub static API_KEY: LazyLock<String> = LazyLock::new(|| {
-    std::env::var("API_KEY").expect("API_KEY must be set.")
+    CONFIG.api.key.clone().expect("API_KEY must be set.")
 });
 
 pub fn validate_api_key(req: &Request<()>) -> bool {

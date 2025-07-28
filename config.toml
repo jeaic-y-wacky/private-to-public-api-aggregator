@@ -1,0 +1,46 @@
+# API Aggregator Configuration File
+#
+# This configuration file allows you to customize the behavior of the API aggregator.
+# Sensitive values like API keys should still be set via environment variables.
+# Environment variables will override any values set in this file.
+
+[server]
+# Server binding configuration
+host = "0.0.0.0"
+port = "4653"
+# Log level: trace, debug, info, warn, error
+log_level = "info"
+
+[api]
+# API authentication - set API_KEY environment variable instead of here
+# key = "your-api-key-here"
+
+[spotify]
+# Spotify API credentials - set these via environment variables instead
+# client_id = "your-spotify-client-id"
+# client_secret = "your-spotify-client-secret"  
+# refresh_token = "your-spotify-refresh-token"
+
+# Genres to exclude from Spotify results (case-insensitive partial matching)
+excluded_genres = ["comedy"]
+
+# Number of tracks to show by default
+tracks_limit = 6
+
+[letterboxd]
+# Default RSS feed URL for Letterboxd
+default_feed_url = "https://letterboxd.com/atropos_Dad/rss"
+
+# Number of movies to show by default
+movies_limit = 5
+
+[cache]
+# Cache duration in seconds for Spotify data (15 minutes)
+spotify_duration_secs = 900
+
+# Cache duration in seconds for Letterboxd data (1 hour)  
+letterboxd_duration_secs = 3600
+
+[cors]
+# CORS allowed origin
+allowed_origin = "https://jeaic.com"

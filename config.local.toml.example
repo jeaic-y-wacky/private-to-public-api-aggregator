@@ -1,0 +1,34 @@
+# Example local configuration file
+# Copy this to config.local.toml and customize as needed
+# This file is ignored by git for your privacy
+
+[server]
+# Uncomment and modify to change server settings
+# host = "127.0.0.1"          # Bind to localhost only
+# port = "8080"               # Use a different port
+# log_level = "debug"         # Enable debug logging
+
+[spotify]
+# Customize Spotify behavior
+# excluded_genres = ["comedy", "podcast", "audiobook"]  # Add more excluded genres
+# tracks_limit = 10                                     # Show more tracks by default
+
+[letterboxd]
+# Set your Letterboxd RSS feed URL
+# default_feed_url = "https://letterboxd.com/your-username/rss"
+# movies_limit = 8             # Show more movies by default
+
+[cache]
+# Adjust cache durations (in seconds)
+# spotify_duration_secs = 1800    # 30 minutes for Spotify
+# letterboxd_duration_secs = 7200 # 2 hours for Letterboxd
+
+[cors]
+# Set your website's domain for CORS
+# allowed_origin = "https://your-website.com"
+
+# Note: Sensitive values like API keys should still be set via environment variables:
+# - API_KEY
+# - SPOTIFY_CLIENT_ID  
+# - SPOTIFY_CLIENT_SECRET
+# - SPOTIFY_REFRESH_TOKEN

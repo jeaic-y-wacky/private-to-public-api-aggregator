@@ -6,13 +6,12 @@ use std::collections::HashMap;
 use std::time::{Instant, Duration, SystemTime};
 use std::sync::{LazyLock, Mutex};
 use crate::auth;
+use crate::config::CONFIG;
 use surf;
 use url::Url;
 use chrono::DateTime;
 
 const LETTERBOXD_NAMESPACE: &str = "letterboxd";
-const NUMBER_OF_MOVIES_TO_SHOW: usize = 5;
-const CACHE_DURATION_SECS: u64 = 3600; // 1 hour cache duration
 
 // Cache structure to store results and timestamp
 #[derive(Debug, Clone)]
@@ -45,7 +44,7 @@ pub async fn fetch_letterboxd_feed(feed_url: &str) -> Result<Vec<LetterboxdMovie
         let cache_lock = FEED_CACHE.lock().unwrap();
         if let Some(cache_entry) = cache_lock.get(feed_url) {
             if let Ok(elapsed) = cache_entry.timestamp.elapsed() {
-                if elapsed < Duration::from_secs(CACHE_DURATION_SECS) {
+                if elapsed < Duration::from_secs(CONFIG.cache.letterboxd_duration_secs) {
                     log::info!("Cache hit for feed {}", feed_url);
                     return Ok(cache_entry.movies.clone());
                 } else {
@@ -225,7 +224,7 @@ fn process_letterboxd_items(items: &[Item]) -> Vec<LetterboxdMovie> {
     log::debug!("Sorting movies took: {:?}", sorting_time);
     
     // Limit to the number of movies to show
-    movies.truncate(NUMBER_OF_MOVIES_TO_SHOW);
+    movies.truncate(CONFIG.letterboxd.movies_limit);
     
     let total_time = start_time.elapsed();
     log::debug!("Total process_letterboxd_items took: {:?}", total_time);
@@ -252,7 +251,7 @@ pub async fn get_letterboxd_movies(req: Request<()>) -> tide::Result<Response> {
     let feed_url = req.url().query_pairs()
         .find(|(k, _)| k == "feed_url")
         .map(|(_, v)| v.to_string())
-        .unwrap_or_else(|| "https://letterboxd.com/atropos_Dad/rss".to_string());
+        .unwrap_or_else(|| CONFIG.letterboxd.default_feed_url.clone());
     
     // Get optional no_cache parameter
     let no_cache = req.url().query_pairs()
