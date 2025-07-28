@@ -5,22 +5,78 @@ A Rust-based API aggregator that provides endpoints for Spotify recently played 
 ## Setup
 
 1. Clone the repository
-2. Create a `.env` file with the following variables:
+2. Create configuration:
+   - Copy `config.toml` to `config.local.toml` for local customization (optional)
+   - Or set environment variables as described below
+3. Set required environment variables:
    ```
    API_KEY=your_api_key_here
    SPOTIFY_CLIENT_ID=your_spotify_client_id
    SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
    SPOTIFY_REFRESH_TOKEN=your_spotify_refresh_token
    ```
-3. Generate an API key with the provided script:
+4. Generate an API key with the provided script:
    ```
    python generate_api_key.py
    ```
-4. Build and run the application:
+5. Build and run the application:
    ```
    cargo build --release
    cargo run --release
    ```
+
+## Configuration
+
+The application uses a flexible configuration system that supports both TOML files and environment variables:
+
+### TOML Configuration
+
+Create a `config.local.toml` file to customize settings (this file is ignored by git):
+
+```toml
+[server]
+host = "0.0.0.0"
+port = "4653"
+log_level = "info"
+
+[spotify]
+excluded_genres = ["comedy", "podcast"]
+tracks_limit = 6
+
+[letterboxd]
+default_feed_url = "https://letterboxd.com/username/rss"
+movies_limit = 5
+
+[cache]
+spotify_duration_secs = 900      # 15 minutes
+letterboxd_duration_secs = 3600  # 1 hour
+
+[cors]
+allowed_origin = "https://yourdomain.com"
+```
+
+### Environment Variables (Override TOML)
+
+All TOML settings can be overridden with environment variables:
+
+- `HOST` - Server host
+- `PORT` - Server port
+- `RUST_LOG` - Log level
+- `API_KEY` - API authentication key (required)
+- `SPOTIFY_CLIENT_ID` - Spotify API client ID (required)
+- `SPOTIFY_CLIENT_SECRET` - Spotify API client secret (required)
+- `SPOTIFY_REFRESH_TOKEN` - Spotify API refresh token (required)
+- `SPOTIFY_EXCLUDED_GENRES` - Comma-separated list of genres to exclude
+- `ALLOWED_ORIGIN` - CORS allowed origin
+
+### Migration from Environment-Only Setup
+
+The application is fully backwards compatible. Existing `.env` files and environment variables will continue to work exactly as before. The TOML configuration system provides additional flexibility for settings that were previously hardcoded.
+
+To migrate to the new configuration system:
+1. Keep your existing `.env` file for sensitive credentials
+2. Create a `config.local.toml` file for application settings
+3. Move non-sensitive configuration from environment variables to TOML as desired
 
 ## API Endpoints
 
@@ -67,7 +123,7 @@ Returns the 5 most recently watched movies from a Letterboxd RSS feed.
 **Request:**
 - Method: GET
 - Query Parameters:
-  - `feed_url` (optional): URL of the Letterboxd RSS feed (default: https://letterboxd.com/atropos_Dad/rss)
+  - `feed_url` (optional): URL of the Letterboxd RSS feed (default: configurable in config.toml)
   - `no_cache` (optional): Set to "true" to bypass cache
 
 **Response:**
@@ -138,8 +194,8 @@ Returns data from all three sources (URLs, Letterboxd movies, and Spotify tracks
 - Method: GET
 - No authentication required
 - Query Parameters:
-  - `feed_url` (optional): URL of the Letterboxd RSS feed (default: https://letterboxd.com/atropos_Dad/rss)
-  - `limit` (optional): Number of Spotify tracks to return (default: 5)
+  - `feed_url` (optional): URL of the Letterboxd RSS feed (default: configurable in config.toml)
+  - `limit` (optional): Number of Spotify tracks to return (default: configurable in config.toml)
   - `no_cache` (optional): Set to "true" to bypass cache
 
 **Response:**
@@ -180,8 +236,16 @@ Response Format:
 
 Both the Letterboxd and Spotify endpoints implement caching to improve performance and reduce external API calls:
 
-- Letterboxd data is cached for 1 hour
-- Spotify data is cached for 15 minutes
+- Letterboxd data cache duration: configurable (default: 1 hour)
+- Spotify data cache duration: configurable (default: 15 minutes)
+
+Cache durations can be customized in `config.toml` or `config.local.toml`:
+
+```toml
+[cache]
+spotify_duration_secs = 900      # 15 minutes
+letterboxd_duration_secs = 3600  # 1 hour
+```
 
 Use the `no_cache=true` query parameter to bypass the cache when needed.
 
