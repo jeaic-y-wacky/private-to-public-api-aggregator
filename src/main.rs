@@ -1,9 +1,9 @@
 use tide::{log, prelude::*};
 use dotenv::dotenv;
 use femme::LevelFilter;
-use std::env;
 use tide::security::{CorsMiddleware, Origin};
 use http_types::headers::HeaderValue;
+use crate::config::CONFIG;
 
 mod url_handlers;
 mod auth;
@@ -11,6 +11,7 @@ mod letterboxd;
 mod spotify;
 mod cache;
 mod aggregator;
+mod config;
 
 #[async_std::main]
 async fn main() -> tide::Result<()> {
@@ -26,19 +27,16 @@ async fn main() -> tide::Result<()> {
         Err(e) => log::warn!("Failed to get current directory: {}", e),
     }
     
-    // Check for critical environment variables
-    let api_key = env::var("API_KEY").unwrap_or_else(|_| {
-        log::warn!("API_KEY not set in environment");
-        "missing".to_string()
-    });
-    log::info!("API_KEY is {}", if api_key != "missing" { "set" } else { "missing" });
-    
-        
-    let allowed_origin = env::var("ALLOWED_ORIGIN").unwrap_or_else(|_| "https://jeaic.com".to_string());
-    log::info!("ALLOWED_ORIGIN is {}", allowed_origin);
+    // Initialize configuration (this will validate and log configuration status)
+    let config = &*CONFIG;
+    log::info!("Configuration loaded - API_KEY: {}, HOST: {}, PORT: {}", 
+        if config.api.key.is_some() { "set" } else { "missing" },
+        config.server.host,
+        config.server.port
+    );
 
-    // Set log level based on environment (default to Info for production)
-    let log_level = match env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()).as_str() {
+    // Set log level from configuration
+    let log_level = match config.server.log_level.as_str() {
         "debug" => LevelFilter::Debug,
         "trace" => LevelFilter::Trace,
         "warn" => LevelFilter::Warn,
@@ -50,15 +48,12 @@ async fn main() -> tide::Result<()> {
     let mut app = tide::new();
     let cors = CorsMiddleware::new()
         // .allow_origin(Origin::Any)
-        .allow_origin(Origin::Exact(allowed_origin))
+        .allow_origin(Origin::Exact(config.cors.allowed_origin.clone()))
         .allow_methods("GET, POST, OPTIONS".parse::<HeaderValue>().unwrap())
         .allow_credentials(false);
     app.with(cors);
     
-    // Get host and port from environment variables or use defaults
-    let host = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
-    let port = env::var("PORT").unwrap_or_else(|_| "4653".to_string());
-    log::info!("Using HOST={} and PORT={}", host, port);
+    log::info!("Using HOST={} and PORT={}", config.server.host, config.server.port);
     
     app.at("/").get(|_| async { Ok("API Endpoint Aggregator") });
     app.at("/url-webhook").post(url_handlers::log_url);
@@ -67,7 +62,7 @@ async fn main() -> tide::Result<()> {
     app.at("/spotify").get(spotify::get_spotify_tracks);
     app.at("/aggregated").get(aggregator::get_aggregated_data);
     
-    log::info!("Server running on http://{}:{}", host, port);
-    app.listen(format!("{}:{}", host, port)).await?;
+    log::info!("Server running on http://{}:{}", config.server.host, config.server.port);
+    app.listen(format!("{}:{}", config.server.host, config.server.port)).await?;
     Ok(())
 }

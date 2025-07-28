@@ -4,6 +4,7 @@ use std::time::Instant;
 use crate::url_handlers::LAST_READ_URLS;
 use crate::letterboxd;
 use crate::spotify;
+use crate::config::CONFIG;
 
 /// Aggregated data response structure
 #[derive(Debug, serde::Serialize)]
@@ -23,12 +24,12 @@ pub async fn get_aggregated_data(req: Request<()>) -> tide::Result<Response> {
     let letterboxd_feed = req.url().query_pairs()
         .find(|(k, _)| k == "feed_url")
         .map(|(_, v)| v.to_string())
-        .unwrap_or_else(|| "https://letterboxd.com/atropos_Dad/rss".to_string());
+        .unwrap_or_else(|| CONFIG.letterboxd.default_feed_url.clone());
         
     let spotify_limit = req.url().query_pairs()
         .find(|(k, _)| k == "limit")
         .and_then(|(_, v)| v.parse::<usize>().ok())
-        .unwrap_or(6);
+        .unwrap_or(CONFIG.spotify.tracks_limit);
         
     let no_cache = req.url().query_pairs()
         .find(|(k, _)| k == "no_cache")

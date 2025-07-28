@@ -1,3 +1,6 @@
 /target
 
 .env
+
+# Optional local configuration file - users can customize this
+config.local.toml

@@ -5,32 +5,28 @@ use std::collections::HashMap;
 use std::time::{Instant, Duration, SystemTime};
 use std::sync::{LazyLock, Mutex};
 use crate::auth;
+use crate::config::CONFIG;
 use surf;
 use base64;
 
 static CLIENT_ID: LazyLock<String> = LazyLock::new(|| {
-    std::env::var("SPOTIFY_CLIENT_ID").expect("SPOTIFY_CLIENT_ID must be set.")
+    CONFIG.spotify.client_id.clone().expect("SPOTIFY_CLIENT_ID must be set.")
 });
 
 static CLIENT_SECRET: LazyLock<String> = LazyLock::new(|| {
-    std::env::var("SPOTIFY_CLIENT_SECRET").expect("SPOTIFY_CLIENT_SECRET must be set.")
+    CONFIG.spotify.client_secret.clone().expect("SPOTIFY_CLIENT_SECRET must be set.")
 });
 
 static REFRESH_TOKEN: LazyLock<String> = LazyLock::new(|| {
-    std::env::var("SPOTIFY_REFRESH_TOKEN").expect("SPOTIFY_REFRESH_TOKEN must be set.")
+    CONFIG.spotify.refresh_token.clone().expect("SPOTIFY_REFRESH_TOKEN must be set.")
 });
 
 static EXCLUDED_GENRES: LazyLock<Vec<String>> = LazyLock::new(|| {
-    std::env::var("SPOTIFY_EXCLUDED_GENRES")
-        .unwrap_or_else(|_| "comedy".to_string())
-        .split(',')
-        .filter(|s| !s.is_empty())
+    CONFIG.spotify.excluded_genres.iter()
         .map(|s| s.trim().to_lowercase())
         .collect()
 });
 
-const CACHE_DURATION_SECS: u64 = 900; // 15 minutes
-const NUMBER_OF_TRACKS_TO_SHOW: usize = 6;
 
 // Cache structure to store access token and timestamp
 #[derive(Debug, Clone)]
@@ -183,7 +179,7 @@ async fn get_access_token() -> Result<String, String> {
         let cache_lock = TOKEN_CACHE.lock().unwrap();
         if let Some(cache_entry) = &*cache_lock {
             if let Ok(elapsed) = cache_entry.timestamp.elapsed() {
-                if elapsed < Duration::from_secs(CACHE_DURATION_SECS) {
+                if elapsed < Duration::from_secs(CONFIG.cache.spotify_duration_secs) {
                     log::info!("Access token cache hit");
                     return Ok(cache_entry.access_token.clone());
                 } else {
@@ -250,7 +246,7 @@ pub async fn get_recently_played(limit: usize) -> Result<Vec<SpotifyTrack>, Stri
         let cache_lock = TRACKS_CACHE.lock().unwrap();
         if let Some(cache_entry) = &*cache_lock {
             if let Ok(elapsed) = cache_entry.timestamp.elapsed() {
-                if elapsed < Duration::from_secs(CACHE_DURATION_SECS) {
+                if elapsed < Duration::from_secs(CONFIG.cache.spotify_duration_secs) {
                     log::info!("Recently played tracks cache hit");
                     // Return limited results from cache
                     let limited_tracks = cache_entry.tracks.iter().take(limit).cloned().collect();
@@ -373,7 +369,7 @@ pub async fn get_spotify_tracks(req: Request<()>) -> tide::Result<Response> {
     let limit = req.url().query_pairs()
         .find(|(k, _)| k == "limit")
         .and_then(|(_, v)| v.parse::<usize>().ok())
-        .unwrap_or(NUMBER_OF_TRACKS_TO_SHOW);
+        .unwrap_or(CONFIG.spotify.tracks_limit);
     
     // Get optional no_cache parameter
     let no_cache = req.url().query_pairs()
