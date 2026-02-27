@@ -305,31 +305,10 @@ pub async fn get_recently_played(limit: usize) -> Result<Vec<SpotifyTrack>, Stri
         let mut tracks: Vec<SpotifyTrack> = Vec::new();
         
         for item in recently_played.items.iter() {
-            // Get all genres from all artists on the track
-            let mut track_genres: Vec<String> = Vec::new();
-            for artist in &item.track.artists {
-                if let Some(genres) = artist_genres.get(&artist.id) {
-                    track_genres.extend(genres.clone());
-                }
-            }
-            
-            // Remove duplicates
-            track_genres.sort();
-            track_genres.dedup();
-            
-            // Check if any of the track's genres are in the excluded list
-            let should_exclude = if !EXCLUDED_GENRES.is_empty() {
-                track_genres.iter().any(|genre| {
-                    let genre_lower = genre.to_lowercase();
-                    EXCLUDED_GENRES.iter().any(|excluded| {
-                        genre_lower.contains(excluded) || excluded.contains(&genre_lower)
-                    })
-                })
-            } else {
-                false
-            };
-            
-            if !should_exclude {
+            let artist_ids: Vec<String> = item.track.artists.iter().map(|a| a.id.clone()).collect();
+            let track_genres = aggregate_genres_for_track(&artist_ids, &artist_genres);
+
+            if !should_exclude_track(&track_genres, &EXCLUDED_GENRES) {
                 tracks.push(SpotifyTrack {
                     track_name: item.track.name.clone(),
                     artist: item.track.artists.first().map(|artist| artist.name.clone()).unwrap_or_default(),
@@ -367,6 +346,33 @@ pub async fn get_recently_played(limit: usize) -> Result<Vec<SpotifyTrack>, Stri
             .unwrap_or_else(|_| "Unknown error".to_string());
         Err(format!("Failed to get recently played tracks: {} - {}", response.status(), error_text))
     }
+}
+
+fn aggregate_genres_for_track(
+    track_artist_ids: &[String],
+    artist_genres: &HashMap<String, Vec<String>>,
+) -> Vec<String> {
+    let mut track_genres: Vec<String> = Vec::new();
+    for artist_id in track_artist_ids {
+        if let Some(genres) = artist_genres.get(artist_id) {
+            track_genres.extend(genres.clone());
+        }
+    }
+    track_genres.sort();
+    track_genres.dedup();
+    track_genres
+}
+
+fn should_exclude_track(track_genres: &[String], excluded_genres: &[String]) -> bool {
+    if excluded_genres.is_empty() {
+        return false;
+    }
+    track_genres.iter().any(|genre| {
+        let genre_lower = genre.to_lowercase();
+        excluded_genres.iter().any(|excluded| {
+            genre_lower.contains(excluded) || excluded.contains(&genre_lower)
+        })
+    })
 }
 
 pub async fn get_spotify_tracks(req: Request<()>) -> tide::Result<Response> {
@@ -428,5 +434,158 @@ pub async fn get_spotify_tracks(req: Request<()>) -> tide::Result<Response> {
             
             Ok(res)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_artist_object_deserializes_from_individual_endpoint_response() {
+        // This is the shape returned by GET /artists/{id} (individual endpoint)
+        // as opposed to the old batch GET /artists?ids= which wrapped in { "artists": [...] }
+        let json = r#"{
+            "id": "06HL4z0CvFAxyc27GXpf02",
+            "name": "Taylor Swift",
+            "genres": ["pop", "singer-songwriter pop"],
+            "external_urls": { "spotify": "https://open.spotify.com/artist/06HL4z0CvFAxyc27GXpf02" },
+            "followers": { "total": 100000000 },
+            "href": "https://api.spotify.com/v1/artists/06HL4z0CvFAxyc27GXpf02",
+            "images": [],
+            "popularity": 100,
+            "type": "artist",
+            "uri": "spotify:artist:06HL4z0CvFAxyc27GXpf02"
+        }"#;
+
+        let artist: FullArtistObject = serde_json::from_str(json).unwrap();
+        assert_eq!(artist.id, "06HL4z0CvFAxyc27GXpf02");
+        assert_eq!(artist.name, "Taylor Swift");
+        assert_eq!(artist.genres, vec!["pop", "singer-songwriter pop"]);
+    }
+
+    #[test]
+    fn full_artist_object_deserializes_with_empty_genres() {
+        let json = r#"{
+            "id": "abc123",
+            "name": "Unknown Artist",
+            "genres": []
+        }"#;
+
+        let artist: FullArtistObject = serde_json::from_str(json).unwrap();
+        assert_eq!(artist.id, "abc123");
+        assert!(artist.genres.is_empty());
+    }
+
+    #[test]
+    fn aggregate_genres_deduplicates_and_sorts() {
+        let mut artist_genres = HashMap::new();
+        artist_genres.insert("a1".to_string(), vec!["rock".to_string(), "indie".to_string()]);
+        artist_genres.insert("a2".to_string(), vec!["rock".to_string(), "alternative".to_string()]);
+
+        let result = aggregate_genres_for_track(
+            &["a1".to_string(), "a2".to_string()],
+            &artist_genres,
+        );
+
+        assert_eq!(result, vec!["alternative", "indie", "rock"]);
+    }
+
+    #[test]
+    fn aggregate_genres_handles_missing_artist() {
+        let mut artist_genres = HashMap::new();
+        artist_genres.insert("a1".to_string(), vec!["pop".to_string()]);
+
+        let result = aggregate_genres_for_track(
+            &["a1".to_string(), "missing_id".to_string()],
+            &artist_genres,
+        );
+
+        assert_eq!(result, vec!["pop"]);
+    }
+
+    #[test]
+    fn aggregate_genres_empty_input() {
+        let artist_genres = HashMap::new();
+        let result = aggregate_genres_for_track(&[], &artist_genres);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn should_exclude_matches_substring() {
+        let genres = vec!["stand-up comedy".to_string(), "rock".to_string()];
+        let excluded = vec!["comedy".to_string()];
+        assert!(should_exclude_track(&genres, &excluded));
+    }
+
+    #[test]
+    fn should_exclude_no_match() {
+        let genres = vec!["indie rock".to_string(), "alternative".to_string()];
+        let excluded = vec!["comedy".to_string()];
+        assert!(!should_exclude_track(&genres, &excluded));
+    }
+
+    #[test]
+    fn should_exclude_empty_excluded_list() {
+        let genres = vec!["comedy".to_string()];
+        let excluded: Vec<String> = vec![];
+        assert!(!should_exclude_track(&genres, &excluded));
+    }
+
+    #[test]
+    fn should_exclude_reverse_substring_match() {
+        // "comedy" excluded genre contains "com" track genre
+        let genres = vec!["com".to_string()];
+        let excluded = vec!["comedy".to_string()];
+        assert!(should_exclude_track(&genres, &excluded));
+    }
+
+    #[test]
+    fn should_exclude_case_insensitive() {
+        let genres = vec!["Stand-Up Comedy".to_string()];
+        let excluded = vec!["comedy".to_string()];
+        assert!(should_exclude_track(&genres, &excluded));
+    }
+
+    #[async_std::test]
+    async fn get_artists_with_genres_empty_returns_empty() {
+        let result = get_artists_with_genres(vec![], "fake_token").await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn spotify_track_serializes_to_json() {
+        let track = SpotifyTrack {
+            track_name: "Test Song".to_string(),
+            artist: "Test Artist".to_string(),
+            album_name: "Test Album".to_string(),
+            played_at: "2026-02-27T10:00:00Z".to_string(),
+            spotify_url: "https://open.spotify.com/track/abc".to_string(),
+            album_image_url: Some("https://i.scdn.co/image/abc".to_string()),
+            genres: vec!["pop".to_string(), "rock".to_string()],
+        };
+
+        let json = serde_json::to_value(&track).unwrap();
+        assert_eq!(json["track_name"], "Test Song");
+        assert_eq!(json["genres"][0], "pop");
+        assert_eq!(json["genres"][1], "rock");
+    }
+
+    #[test]
+    fn spotify_track_serializes_with_null_image() {
+        let track = SpotifyTrack {
+            track_name: "No Image".to_string(),
+            artist: "Artist".to_string(),
+            album_name: "Album".to_string(),
+            played_at: "2026-02-27T10:00:00Z".to_string(),
+            spotify_url: "https://open.spotify.com/track/xyz".to_string(),
+            album_image_url: None,
+            genres: vec![],
+        };
+
+        let json = serde_json::to_value(&track).unwrap();
+        assert!(json["album_image_url"].is_null());
+        assert!(json["genres"].as_array().unwrap().is_empty());
     }
 }
