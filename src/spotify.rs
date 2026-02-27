@@ -131,47 +131,55 @@ struct FullArtistObject {
     genres: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct ArtistsResponse {
-    artists: Vec<FullArtistObject>,
+async fn fetch_single_artist(artist_id: String, access_token: String) -> Option<(String, Vec<String>)> {
+    let mut response = match surf::get(format!("https://api.spotify.com/v1/artists/{}", artist_id))
+        .header("Authorization", format!("Bearer {}", access_token))
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) => {
+            log::error!("Failed to fetch artist {}: {}", artist_id, e);
+            return None;
+        }
+    };
+
+    if response.status().is_success() {
+        match response.body_json::<FullArtistObject>().await {
+            Ok(artist) => Some((artist.id, artist.genres)),
+            Err(e) => {
+                log::error!("Failed to parse artist {} response: {}", artist_id, e);
+                None
+            }
+        }
+    } else {
+        let error_text = response.body_string().await.unwrap_or_else(|_| "Unknown error".to_string());
+        log::error!("Failed to get artist {}: {} - {}", artist_id, response.status(), error_text);
+        None
+    }
 }
 
 async fn get_artists_with_genres(artist_ids: Vec<String>, access_token: &str) -> Result<HashMap<String, Vec<String>>, String> {
     if artist_ids.is_empty() {
         return Ok(HashMap::new());
     }
-    
+
     let start_time = Instant::now();
-    
-    // Spotify API allows up to 50 artists per request
-    let mut all_genres = HashMap::new();
-    
-    for chunk in artist_ids.chunks(50) {
-        let ids = chunk.join(",");
-        let mut response = surf::get(format!("https://api.spotify.com/v1/artists?ids={}", ids))
-            .header("Authorization", format!("Bearer {}", access_token))
-            .await
-            .map_err(|e| format!("Failed to make request to Spotify Artists API: {}", e))?;
-        
-        if response.status().is_success() {
-            let artists_response: ArtistsResponse = response.body_json()
-                .await
-                .map_err(|e| format!("Failed to parse artists response: {}", e))?;
-            
-            for artist in artists_response.artists {
-                all_genres.insert(artist.id, artist.genres);
-            }
-        } else {
-            let error_text = response.body_string()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            log::error!("Failed to get artist genres: {} - {}", response.status(), error_text);
-        }
-    }
-    
+
+    // Fetch each artist individually (batch endpoint removed in March 2026)
+    // Run all requests concurrently for performance
+    let futures: Vec<_> = artist_ids.iter()
+        .map(|id| fetch_single_artist(id.clone(), access_token.to_string()))
+        .collect();
+
+    let results = futures::future::join_all(futures).await;
+
+    let all_genres: HashMap<String, Vec<String>> = results.into_iter()
+        .flatten()
+        .collect();
+
     let total_time = start_time.elapsed();
     log::info!("Fetched genres for {} artists in {:?}", artist_ids.len(), total_time);
-    
+
     Ok(all_genres)
 }
 
