@@ -11,6 +11,24 @@ struct AggregatedData {
     urls: Vec<String>,
     movies: Vec<letterboxd::LetterboxdMovie>,
     tracks: Vec<spotify::SpotifyTrack>,
+    /// Populated only when a source failed. Without this, a broken upstream is
+    /// indistinguishable from "nothing to show" on the consuming page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    errors: Option<AggregationErrors>,
+}
+
+#[derive(Debug, Default, serde::Serialize)]
+struct AggregationErrors {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    letterboxd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    spotify: Option<String>,
+}
+
+impl AggregationErrors {
+    fn is_empty(&self) -> bool {
+        self.letterboxd.is_none() && self.spotify.is_none()
+    }
 }
 
 /// Endpoint that aggregates data from URLs, Letterboxd, and Spotify
@@ -24,21 +42,23 @@ pub async fn get_aggregated_data(req: Request<()>) -> tide::Result<Response> {
         .find(|(k, _)| k == "feed_url")
         .map(|(_, v)| v.to_string())
         .unwrap_or_else(|| "https://letterboxd.com/atropos_Dad/rss".to_string());
-        
+
     let spotify_limit = req.url().query_pairs()
         .find(|(k, _)| k == "limit")
         .and_then(|(_, v)| v.parse::<usize>().ok())
         .unwrap_or(6);
-        
+
     let no_cache = req.url().query_pairs()
         .find(|(k, _)| k == "no_cache")
         .map(|(_, v)| v == "true")
         .unwrap_or(false);
 
-    // Log cache preferences
     if no_cache {
-        log::info!("Request to bypass cache, but this is not fully implemented in the aggregated endpoint");
+        log::info!("Bypassing caches for this aggregated request");
+        spotify::clear_caches();
     }
+
+    let mut errors = AggregationErrors::default();
 
     // Fetch URLs from the static queue
     let urls = {
@@ -55,6 +75,7 @@ pub async fn get_aggregated_data(req: Request<()>) -> tide::Result<Response> {
         },
         Err(e) => {
             log::error!("Error fetching Letterboxd data: {}", e);
+            errors.letterboxd = Some(e.to_string());
             vec![]
         }
     };
@@ -67,6 +88,7 @@ pub async fn get_aggregated_data(req: Request<()>) -> tide::Result<Response> {
         },
         Err(e) => {
             log::error!("Error fetching Spotify data: {}", e);
+            errors.spotify = Some(e);
             vec![]
         }
     };
@@ -76,14 +98,16 @@ pub async fn get_aggregated_data(req: Request<()>) -> tide::Result<Response> {
         urls,
         movies,
         tracks,
+        errors: if errors.is_empty() { None } else { Some(errors) },
     };
 
     let mut res = Response::new(StatusCode::Ok);
     res.set_content_type("application/json");
+    // This is a live feed: never let a browser or CDN hand back a stale copy.
+    res.insert_header("Cache-Control", "no-store, max-age=0");
     res.set_body(json!(aggregated_data));
 
-    let elapsed = start_time.elapsed();
-    log::info!("Aggregated data request processed in {:?}", elapsed);
+    log::info!("Aggregated data request processed in {:?}", start_time.elapsed());
 
     Ok(res)
-} 
+}
