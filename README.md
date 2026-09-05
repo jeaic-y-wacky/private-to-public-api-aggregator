@@ -280,6 +280,44 @@ Two consequences shape the code in `src/spotify.rs`:
    than failing the whole response — which is what turns a small upstream change
    into an empty tracks array.
 
+### Recovering from a revoked refresh token
+
+Symptom: `/aggregated` returns `"tracks": []`, and the log carries
+
+```
+Error fetching Spotify data: Refresh token is no longer valid (HTTP 400 -
+{"error":"invalid_grant","error_description":"Refresh token revoked"})
+```
+
+`invalid_grant` means the *user grant* is gone, not the app. The client ID and
+secret usually still work — confirm by requesting a `client_credentials` token:
+a 200 there proves only the refresh token needs replacing. (`invalid_client`
+would mean the opposite: the secret is the problem.)
+
+To fix, on the server, as the account that owns the listening history:
+
+```bash
+python3 spotify_reauth.py --write-env
+sudo systemctl restart api-aggregator.service
+```
+
+The script prints an authorize URL, takes the `?code=` from the redirect (paste
+the whole URL, it extracts the code), exchanges it, and writes the new token
+into `.env` with a `.env.bak` backup. It reads the client ID and secret from
+`.env` and hardcodes no credentials. Authorization codes expire in about a
+minute, so complete the paste promptly.
+
+The redirect URI must be registered on the app in the Spotify dashboard;
+it defaults to `https://jeaic.com` and is overridable with `--redirect-uri`.
+The only scope requested is `user-read-recently-played`.
+
+### Monitoring
+
+`/aggregated` returns **200 even when Spotify fails completely** — a failed
+source yields an empty array, not an error status, because the other sources are
+still good. An uptime check on the status code will therefore never notice this.
+Alert on the presence of the `errors` key in the response body instead.
+
 ### Security note
 
 Never commit `SPOTIFY_CLIENT_SECRET` or `SPOTIFY_REFRESH_TOKEN`. They belong in

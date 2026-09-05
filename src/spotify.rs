@@ -185,6 +185,13 @@ fn snippet(body: &str, max_chars: usize) -> String {
     }
 }
 
+/// True when a token-endpoint failure means the refresh token itself is dead
+/// (revoked, or the user withdrew the app's access) rather than something
+/// transient. Spotify signals this with OAuth's `invalid_grant`.
+fn is_revoked_grant(body: &str) -> bool {
+    body.contains("invalid_grant")
+}
+
 fn artist_lookup_disabled() -> bool {
     let lock = ARTIST_LOOKUP_DISABLED_UNTIL.lock().unwrap();
     match *lock {
@@ -340,6 +347,21 @@ async fn request_new_token() -> Result<(String, u64), String> {
         let error_text = response.body_string()
             .await
             .unwrap_or_else(|_| "Unknown error".to_string());
+
+        // `invalid_grant` means the refresh token is dead - revoked, or the app's
+        // access was withdrawn. No amount of retrying fixes it, and it needs a
+        // person to re-run the authorization flow, so say so plainly rather than
+        // leaving a bare status code in the log.
+        if is_revoked_grant(&error_text) {
+            return Err(format!(
+                "Refresh token is no longer valid (HTTP {} - {}). This needs a human: \
+                 re-run `python3 spotify_reauth.py --write-env` as the account owner \
+                 and restart the service.",
+                status,
+                snippet(&error_text, 300)
+            ));
+        }
+
         return Err(format!(
             "Token refresh failed: HTTP {} - {}",
             status,
@@ -712,12 +734,24 @@ pub async fn diagnose(req: Request<()>) -> tide::Result<Response> {
     let token = match token {
         Some(t) => t,
         None => {
-            report["conclusion"] = json!(
+            let revoked = report["token_refresh"]["error"]
+                .as_str()
+                .map(|e| is_revoked_grant(e) || e.contains("no longer valid"))
+                .unwrap_or(false);
+
+            report["conclusion"] = json!(if revoked {
+                "The refresh token has been revoked. The client ID and secret are \
+                 probably still fine - only the user grant is gone. Re-run \
+                 `python3 spotify_reauth.py --write-env` as the account owner, then \
+                 restart the service. To confirm the app credentials separately, try a \
+                 client_credentials grant: if that returns 200, the secret is valid and \
+                 only the refresh token needs replacing."
+            } else {
                 "Token refresh failed. Check SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET / \
                  SPOTIFY_REFRESH_TOKEN, and that the app still exists and the owner has \
                  an active Spotify Premium subscription (required for Development Mode \
                  apps since February 2026)."
-            );
+            });
             let mut res = Response::new(StatusCode::Ok);
             res.set_content_type("application/json");
             res.insert_header("Cache-Control", "no-store");
@@ -1085,6 +1119,27 @@ mod tests {
     fn recently_played_response_tolerates_missing_items() {
         let parsed: RecentlyPlayedResponse = serde_json::from_str(r#"{"next": null}"#).unwrap();
         assert!(parsed.items.is_empty());
+    }
+
+    #[test]
+    fn revoked_grant_is_recognised() {
+        // The exact body Spotify returns for a revoked refresh token.
+        assert!(is_revoked_grant(
+            r#"{"error":"invalid_grant","error_description":"Refresh token revoked"}"#
+        ));
+        assert!(is_revoked_grant(
+            r#"{"error":"invalid_grant","error_description":"Invalid refresh token"}"#
+        ));
+    }
+
+    #[test]
+    fn other_token_failures_are_not_treated_as_revoked() {
+        // A bad client secret is invalid_client, and needs a different fix.
+        assert!(!is_revoked_grant(
+            r#"{"error":"invalid_client","error_description":"Invalid client secret"}"#
+        ));
+        assert!(!is_revoked_grant(r#"{"error":"server_error"}"#));
+        assert!(!is_revoked_grant(""));
     }
 
     #[test]
